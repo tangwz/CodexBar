@@ -1,0 +1,58 @@
+name: Artifact network probe
+on:
+  push:
+    branches:
+      - ci/minimax-artifact-probe
+permissions:
+  contents: read
+jobs:
+  download:
+    name: Artifact downloads (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, xcode-27]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 7
+    steps:
+      - name: Check public release artifacts
+        shell: bash
+        run: |
+          python3 - <<'PYPROBE'
+          import concurrent.futures
+          import hashlib
+          import pathlib
+          import subprocess
+          import tempfile
+          import time
+
+          assets = {
+              "oxlint-linux": ("https://github.com/oxc-project/oxc/releases/download/apps_v1.82.0/oxlint-x86_64-unknown-linux-gnu.tar.gz", "2284a516360c42166b9f0b1c1aa6920322d3385d93a7ff7061d2d8ed77ec1e35"),
+              "oxfmt-macos": ("https://github.com/oxc-project/oxc/releases/download/apps_v1.82.0/oxfmt-aarch64-apple-darwin.tar.gz", "2c0a483844922828a8b9b78684cb01e9283242250cad5d7303eb2cce0e027175"),
+              "sparkle": ("https://github.com/sparkle-project/Sparkle/releases/download/2.10.1/Sparkle-for-Swift-Package-Manager.zip", "4c2e48a3e50ebcc2c88a58a4c7264a1a99c3c31857ce754357afb9cdb323022a"),
+          }
+
+          def check(item):
+              name, (url, expected) = item
+              with tempfile.TemporaryDirectory(prefix="artifact-probe-") as directory:
+                  target = pathlib.Path(directory) / "download"
+                  result = subprocess.run(
+                      ["curl", "--disable", "--fail", "--location", "--silent", "--max-time", "25", "--connect-timeout", "15", "--retry", "0", "--output", str(target), "--write-out", "%{http_code}", url],
+                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                  )
+                  size = target.stat().st_size if target.exists() else 0
+                  digest = hashlib.sha256(target.read_bytes()).hexdigest() if result.returncode == 0 and target.exists() else ""
+                  matched = digest == expected
+                  print(f"{name}: curl_exit={result.returncode} http={result.stdout.strip()} bytes={size} checksum={'PASS' if matched else 'FAIL'}", flush=True)
+                  return result.returncode == 0 and result.stdout.strip() == "200" and matched
+
+          all_good = True
+          for sample in range(1, 4):
+              print(f"Sample {sample}/3", flush=True)
+              with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                  results = list(executor.map(check, assets.items()))
+              all_good = all(results) and all_good
+              if sample < 3:
+                  time.sleep(20)
+          raise SystemExit(0 if all_good else 1)
+          PYPROBE
