@@ -223,22 +223,29 @@ enum SpendDashboardSource {
         providers: [UsageProvider],
         codexSources: [CodexSpendSourceDescriptor]) -> SpendDashboardConfiguration
     {
-        let plugins = self.pluginInputs(store: store)
+        let plugins = self.statisticsPlugins(store: store)
         return SpendDashboardConfiguration(
             costUsageEnabled: self.spendCollectionEnabled(settings: settings, providers: providers),
             preferredCurrencyCode: settings.preferredCurrencyCode,
-            providerIDs: providers.map(\.rawValue) + plugins.map(\.id),
+            providerIDs: providers.map(\.rawValue) + plugins.map { "plugin/\($0.manifest.id.rawValue)" },
             codexAccountIdentities: codexSources.map(\.identity),
             codexAccountDisplayNames: self.codexDisplayNamesByID(codexSources),
             sourceOwnershipFingerprints: self.sourceOwnershipFingerprints(
                 providers: providers,
                 settings: settings,
                 store: store) + plugins.map {
-                "\($0.id):\(store.tokenSnapshotPublications[$0.provider]?.scopeSignature ?? ""):" +
-                    "\(settings.providerConfigRevision(forInstanceID: $0.provider))"
+                "plugin/\($0.manifest.id.rawValue):\(store.userPluginStatisticsScope($0)):" +
+                    "\(settings.providerConfigRevision(forInstanceID: $0.manifest.id))"
             },
             sourceRevisions: self.sourceRevisions(providers: providers, settings: settings, store: store)
-                + plugins.map { "\($0.id):\(self.snapshotRevision($0.snapshot))" },
+                + plugins.map { plugin in
+                    let prefix = "plugin/\(plugin.manifest.id.rawValue):"
+                    guard let publication = self.pluginPublication(plugin, store: store) else {
+                        return prefix + "unavailable"
+                    }
+                    guard let snapshot = publication.snapshot else { return prefix + "empty" }
+                    return prefix + self.snapshotRevision(snapshot)
+                },
             sourcePublicationRevisions: providers.filter(UsageStore.tokenCostRequiresProviderSnapshot)
                 .map { store.tokenSnapshotPublicationRevision(for: $0) },
             bucketTimeZoneIdentifier: settings.costUsageBucketTimeZoneIdentifier,
@@ -287,7 +294,10 @@ enum SpendDashboardSource {
                 shouldRefresh: shouldRefresh)
         }
         let baselinesToRefresh = providerBaselines.filter(\.shouldRefresh)
-        if !baselinesToRefresh.isEmpty {
+        let pluginsToRefresh = self.statisticsPlugins(store: store).filter {
+            mode.shouldRefresh(hasPublication: self.pluginPublication($0, store: store) != nil)
+        }
+        if !baselinesToRefresh.isEmpty || !pluginsToRefresh.isEmpty {
             await withTaskGroup(of: Void.self) { group in
                 for baseline in baselinesToRefresh {
                     group.addTask {
@@ -297,6 +307,10 @@ enum SpendDashboardSource {
                             await store.refreshSpendDashboardTokenUsageNow(for: baseline.provider, force: true)
                         }
                     }
+                }
+                for plugin in pluginsToRefresh {
+                    let instanceID = plugin.manifest.id
+                    group.addTask { await store.refreshUserPluginStatistics(instanceID) }
                 }
             }
         }
@@ -337,6 +351,14 @@ enum SpendDashboardSource {
         var inputs = self.pluginInputs(store: store)
         var unavailableSourceIDs: Set<String> = []
         var confirmedEmptySourceIDs: Set<String> = []
+        for plugin in self.statisticsPlugins(store: store) {
+            let sourceID = "plugin/\(plugin.manifest.id.rawValue)"
+            if let publication = self.pluginPublication(plugin, store: store) {
+                if publication.snapshot == nil { confirmedEmptySourceIDs.insert(sourceID) }
+            } else {
+                unavailableSourceIDs.insert(sourceID)
+            }
+        }
         // Provider-specific by design: spend dashboard
         for provider in providers where provider != .codex {
             // Provider-specific by design: Grok local session tokens are independent of the
@@ -1587,6 +1609,7 @@ final class SpendDashboardController {
         let unsafeSourceIDs = invalidatedSourceIDs
             .union(result.invalidatedSourceIDs)
             .union(confirmedEmptySourceIDs)
+            .union(result.failedSourceIDs.filter { $0.hasPrefix("plugin/") })
         nextInputs = self.retainingCompleteDetails(
             nextInputs, configuration: request.configuration, unsafeSourceIDs: unsafeSourceIDs)
         if !result.failedSourceIDs.isEmpty {
@@ -1624,8 +1647,9 @@ final class SpendDashboardController {
         capture: SpendDashboardLoadRequest) -> ReconciledOutcome
     {
         let forceFailed = outcome.result.failedSourceIDs
-        let invalidated = outcome.result.invalidatedSourceIDs
         let barrierFailed = capture.unavailableSourceIDs
+        let invalidated = outcome.result.invalidatedSourceIDs
+            .union(barrierFailed.filter { $0.hasPrefix("plugin/") })
         let forcedCodexIDs = Set(outcome.request.codexRequests.map { "codex:\($0.id)" })
         let confirmedNonemptyInputs = outcome.confirmedNonemptyInputs
         let confirmedNonemptyIDs = Set(confirmedNonemptyInputs.map(\.id))
@@ -1933,7 +1957,14 @@ final class SpendDashboardController {
         let changedCodexIDs = codexIDs.filter {
             previousCodexOwnership[$0] != currentCodexOwnership[$0]
         }
-        return Set(changedProviderIDs).union(changedCodexIDs)
+        let unavailablePluginIDs = current.sourceRevisions.compactMap { revision -> String? in
+            guard revision.hasPrefix("plugin/"),
+                  revision.hasSuffix(":unavailable") || revision.hasSuffix(":empty"),
+                  let separator = revision.firstIndex(of: ":")
+            else { return nil }
+            return String(revision[..<separator])
+        }
+        return Set(changedProviderIDs).union(changedCodexIDs).union(unavailablePluginIDs)
     }
 
     private static func sourceOwnershipByID(_ fingerprints: [String]) -> [String: String] {

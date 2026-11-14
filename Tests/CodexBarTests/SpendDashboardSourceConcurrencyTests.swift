@@ -7,6 +7,58 @@ import Testing
 @MainActor
 struct SpendDashboardSourceConcurrencyTests {
     @Test
+    func `failed plugin capture cannot restore a successful forced input`() async throws {
+        let gate = SpendDashboardPendingLoads<Void>()
+        defer { gate.close() }
+        let sourceID = "plugin/refresh-fixture"
+        let initial = SpendDashboardConfiguration(
+            costUsageEnabled: true,
+            providerIDs: [sourceID],
+            codexAccountIdentities: [],
+            sourceOwnershipFingerprints: ["\(sourceID):owner"],
+            sourceRevisions: ["\(sourceID):success"])
+        let failed = SpendDashboardConfiguration(
+            costUsageEnabled: true,
+            providerIDs: [sourceID],
+            codexAccountIdentities: [],
+            sourceOwnershipFingerprints: ["\(sourceID):owner"],
+            sourceRevisions: ["\(sourceID):unavailable"])
+        let input = try SpendDashboardModel.ProviderInput(
+            id: sourceID,
+            providerID: #require(ProviderInstanceID(rawValue: "refresh-fixture")),
+            displayName: "Refresh Fixture",
+            snapshot: Self.input(cost: 2).snapshot)
+        var modes: [SpendDashboardRequestBuildMode] = []
+        let controller = SpendDashboardController(
+            userDefaults: InMemoryUserDefaults(),
+            requestBuilder: { mode in
+                modes.append(mode)
+                return SpendDashboardLoadRequest(
+                    configuration: mode == .forceRefresh ? initial : failed,
+                    capturedInputs: mode == .forceRefresh ? [input] : [],
+                    unavailableSourceIDs: mode == .forceRefresh ? [] : [sourceID],
+                    codexRequests: [],
+                    now: Date(timeIntervalSince1970: 1_784_179_200),
+                    force: mode.forcesLoader)
+            },
+            loader: { request in
+                await gate.suspend()
+                return SpendDashboardLoadResult(inputs: request.capturedInputs, failedSourceIDs: [])
+            })
+        defer { controller.stop() }
+        controller.update(configuration: initial, force: true)
+        try await gate.waitForPendingCount(1)
+        controller.update(configuration: failed)
+        gate.resume()
+        try await Self.waitUntil { !controller.isRefreshing }
+        #expect(modes == [.forceRefresh, .captureOnly])
+        #expect(controller.publication.inputs.isEmpty)
+        #expect(controller.model.groups.isEmpty)
+        #expect(controller.failedSourceCount == 1)
+        #expect(ShareStatsBuilder.make(model: controller.model) == nil)
+    }
+
+    @Test
     func `gate readiness tolerates a delayed producer`() async throws {
         let gate = SpendDashboardPendingLoads<CostUsageTokenSnapshot>()
         defer { gate.close() }

@@ -535,6 +535,8 @@ Each plugin is counted once under its own instance ID, independently of its `ico
 Plugins without `costUsage` contribute nothing. Sharing uses public manifest metadata, never plugin
 account identity, settings, secrets, or paths. Failed refreshes and changed configuration invalidate
 statistics until a successful refresh; the quota card keeps its existing last-known behavior.
+Usage & Spend's Refresh also refreshes enabled, approved plugins, including those without a current
+statistics publication. Capture-only requests do not fetch, and successful quota-only results remain empty.
 
 ## External hooks
 

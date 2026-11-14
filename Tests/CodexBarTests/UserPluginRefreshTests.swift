@@ -9,6 +9,92 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct UserPluginRefreshTests {
+    @Test(arguments: [SpendDashboardRequestBuildMode.refreshMissing, .forceRefresh])
+    func `dashboard refresh loads approved plugins without an initial publication`(
+        mode: SpendDashboardRequestBuildMode) async throws
+    {
+        let fixture = try Fixture(includeCostUsage: true)
+        defer { fixture.remove() }
+        fixture.settings.costUsageEnabled = true
+        fixture.settings.openCodexUsageLogsEnabled = false
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-11-14T12:00:00Z"))
+        let configuration = SpendDashboardSource.configuration(settings: fixture.settings, store: fixture.store)
+        #expect(configuration.providerIDs == ["plugin/refresh-fixture"])
+        let controller = SpendDashboardController(
+            userDefaults: InMemoryUserDefaults(),
+            requestBuilder: { mode in
+                await SpendDashboardSource.makeRequest(
+                    settings: fixture.settings, store: fixture.store, mode: mode, now: now)
+            },
+            nowProvider: { now })
+        defer { controller.stop() }
+        controller.update(configuration: configuration, force: mode == .forceRefresh)
+        try await fixture.transport.waitForRequests(1)
+        await fixture.transport.finish(1, used: 42)
+        try await SpendDashboardStateWait.until { !controller.isRefreshing }
+        #expect(controller.model.groups.first?.totalTokens == 120)
+        #expect(controller.publication.inputs.first?.provider == fixture.id)
+        #expect(await fixture.transport.requestCount == 1)
+    }
+
+    @Test
+    func `dashboard refresh excludes failed plugin history and can recover`() async throws {
+        let fixture = try Fixture(includeCostUsage: true)
+        defer { fixture.remove() }
+        fixture.settings.costUsageEnabled = true
+        fixture.settings.openCodexUsageLogsEnabled = false
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-11-14T12:00:00Z"))
+        let controller = SpendDashboardController(
+            userDefaults: InMemoryUserDefaults(),
+            requestBuilder: { mode in
+                await SpendDashboardSource.makeRequest(
+                    settings: fixture.settings, store: fixture.store, mode: mode, now: now)
+            },
+            nowProvider: { now })
+        defer { controller.stop() }
+        for (index, failure) in [false, true, false].enumerated() {
+            controller.update(
+                configuration: SpendDashboardSource.configuration(settings: fixture.settings, store: fixture.store),
+                force: true)
+            try await fixture.transport.waitForRequests(index + 1)
+            await fixture.transport.finish(index + 1, used: 42, failure: failure)
+            try await SpendDashboardStateWait.until { !controller.isRefreshing }
+            #expect(controller.configuration?.providerIDs == ["plugin/refresh-fixture"])
+            #expect(controller.publication.inputs.isEmpty == failure)
+            #expect(controller.failedSourceCount == (failure ? 1 : 0))
+            #expect(controller.model.groups.isEmpty == failure)
+            #expect((ShareStatsBuilder.make(model: controller.model) == nil) == failure)
+            #expect((fixture.store.errors[fixture.id] != nil) == failure)
+            #expect(fixture.store.snapshots[fixture.id]?.primary?.usedPercent == 42)
+        }
+        _ = await SpendDashboardSource.makeRequest(
+            settings: fixture.settings, store: fixture.store, mode: .refreshMissing)
+        _ = await SpendDashboardSource.makeRequest(
+            settings: fixture.settings, store: fixture.store, mode: .captureOnly)
+        #expect(await fixture.transport.requestCount == 3)
+    }
+
+    @Test
+    func `dashboard capture does not fetch and refresh excludes unapproved disabled plugins`() async throws {
+        let fixture = try Fixture(includeCostUsage: true)
+        defer { fixture.remove() }
+        fixture.settings.costUsageEnabled = true
+        fixture.settings.openCodexUsageLogsEnabled = false
+        let capture = await SpendDashboardSource.makeRequest(
+            settings: fixture.settings, store: fixture.store, mode: .captureOnly)
+        #expect(capture.unavailableSourceIDs == ["plugin/refresh-fixture"])
+        fixture.settings.setPluginEnabled(fixture.id, enabled: false)
+        let disabled = await SpendDashboardSource.makeRequest(
+            settings: fixture.settings, store: fixture.store, mode: .forceRefresh)
+        #expect(disabled.configuration.providerIDs.isEmpty)
+        fixture.settings.setPluginEnabled(fixture.id, enabled: true)
+        try fixture.store.pluginApprovalStore.remove(instanceID: fixture.id)
+        let unapproved = await SpendDashboardSource.makeRequest(
+            settings: fixture.settings, store: fixture.store, mode: .forceRefresh)
+        #expect(unapproved.configuration.providerIDs.isEmpty)
+        #expect(await fixture.transport.requestCount == 0)
+    }
+
     @Test
     func `community cost usage reaches statistics and sharing once`() async throws {
         let fixture = try Fixture(includeCostUsage: true, idString: "opencodex")
@@ -73,10 +159,14 @@ struct UserPluginRefreshTests {
         await refresh.value
         let request = await SpendDashboardSource.makeRequest(
             settings: fixture.settings, store: fixture.store, mode: .captureOnly)
-        #expect(!request.configuration.providerIDs.contains("plugin/refresh-fixture"))
+        #expect(request.configuration.providerIDs.contains("plugin/refresh-fixture"))
+        #expect(request.confirmedEmptySourceIDs == ["plugin/refresh-fixture"])
         #expect(!request.capturedInputs.contains { $0.id == "plugin/refresh-fixture" })
         #expect(ShareStatsBuilder.make(model: SpendDashboardModel.build(
             inputs: request.capturedInputs, requestedDays: 7, now: request.now)) == nil)
+        _ = await SpendDashboardSource.makeRequest(
+            settings: fixture.settings, store: fixture.store, mode: .refreshMissing)
+        #expect(await fixture.transport.requestCount == 1)
     }
 
     @Test
@@ -85,15 +175,10 @@ struct UserPluginRefreshTests {
         defer { fixture.remove() }
         fixture.settings.costUsageEnabled = true
         fixture.settings.openCodexUsageLogsEnabled = false
-        fixture.store.startSharedSpendDashboardPublication()
-        defer { fixture.store.stopSharedSpendDashboardPublication() }
         let first = Task { await fixture.store.refreshUserPlugin(fixture.id) }
         try await fixture.transport.waitForRequests(1)
         await fixture.transport.finish(1, used: 42)
         await first.value
-        try await SpendDashboardStateWait.until {
-            fixture.store.spendDashboardPublication.inputs.contains { $0.provider == fixture.id }
-        }
         fixture.settings.updatePluginConfig(instanceID: fixture.id) { $0.pluginSettings = ["ACCOUNT": "second"] }
         #expect(SpendDashboardSource.pluginInputs(store: fixture.store).isEmpty)
         fixture.settings.updatePluginConfig(instanceID: fixture.id) { $0.pluginSettings = ["ACCOUNT": "first"] }
@@ -103,6 +188,11 @@ struct UserPluginRefreshTests {
         await fixture.transport.finish(2, used: 50)
         await next.value
         #expect(SpendDashboardSource.pluginInputs(store: fixture.store).count == 1)
+        fixture.store.startSharedSpendDashboardPublication()
+        defer { fixture.store.stopSharedSpendDashboardPublication() }
+        try await SpendDashboardStateWait.until {
+            fixture.store.spendDashboardPublication.inputs.contains { $0.provider == fixture.id }
+        }
         let failed = Task { await fixture.store.refreshUserPlugin(fixture.id) }
         try await fixture.transport.waitForRequests(3)
         await fixture.transport.finish(3, used: 0, failure: true)
@@ -111,6 +201,8 @@ struct UserPluginRefreshTests {
         #expect(fixture.store.errors[fixture.id] != nil)
         try await SpendDashboardStateWait.until { fixture.store.spendDashboardPublication.inputs.isEmpty }
         #expect(SpendDashboardSource.pluginInputs(store: fixture.store).isEmpty)
+        fixture.store.stopSharedSpendDashboardPublication()
+        await fixture.transport.finishPending()
     }
 
     enum Change: CaseIterable {
@@ -430,6 +522,16 @@ struct UserPluginRefreshTests {
     private actor GatedTransport: ProviderHTTPTransport {
         private var requests: [URLRequest] = []
         private var continuations: [Int: CheckedContinuation<(Data, URLResponse), any Error>] = [:]
+
+        var requestCount: Int {
+            self.requests.count
+        }
+
+        func finishPending() {
+            for index in self.continuations.keys.sorted() {
+                self.finish(index, used: 0, failure: true)
+            }
+        }
 
         func data(for request: URLRequest) async throws -> (Data, URLResponse) {
             self.requests.append(request)
