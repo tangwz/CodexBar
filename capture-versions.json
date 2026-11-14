@@ -1,0 +1,6 @@
+{
+  "upgradeAndSharingSourceCommit": "20da67d6ea07394ab201797a6647ef8b6345b5d9",
+  "nullableLedgerSourceCommit": "bcda9e66f12848277e17490f7100822d1b98a4a7",
+  "latestValidatedSourceCommit": "bcda9e66f12848277e17490f7100822d1b98a4a7",
+  "focusedSwiftTestingCount": 871
+}

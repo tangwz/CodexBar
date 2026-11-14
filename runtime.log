@@ -1,0 +1,11 @@
+2026-11-15 00:49:56.986 Db CommunityStatisticsProof[83775:2de4db] [com.steipete.codexbar:community-fixture-plugin] [community-proof] fetch mode=success supportsCostUsageV2=false
+2026-11-15 00:49:56.986 Db CommunityStatisticsProof[83775:2de4db] [com.steipete.codexbar:community-fixture-plugin] [community-proof] return quota=42 tokens=1500 v2=false
+2026-11-15 00:49:56.993 Db CommunityStatisticsProof[83775:2de4db] [com.steipete.codexbar:community-fixture-plugin] [community-proof] fetch mode=success supportsCostUsageV2=false
+2026-11-15 00:49:56.993 Db CommunityStatisticsProof[83775:2de4db] [com.steipete.codexbar:community-fixture-plugin] [community-proof] return quota=42 tokens=1500 v2=false
+2026-11-15 01:17:02.270 Db CommunityStatisticsProof[97177:2f37b7] [com.steipete.codexbar:community-fixture-plugin] [community-proof] fetch mode=success supportsCostUsageV2=true
+2026-11-15 01:17:02.270 Db CommunityStatisticsProof[97177:2f37b7] [com.steipete.codexbar:community-fixture-plugin] [community-proof] return quota=42 tokens=1500 v2=true
+2026-11-15 01:20:47.095 Db CommunityStatisticsProof[97177:2f56e1] [com.steipete.codexbar:community-fixture-plugin] [community-proof] fetch mode=success supportsCostUsageV2=true
+2026-11-15 01:20:47.095 Db CommunityStatisticsProof[97177:2f56e1] [com.steipete.codexbar:community-fixture-plugin] [community-proof] return quota=42 tokens=1500 v2=true
+2026-11-15 01:21:09.808 Db CommunityStatisticsProof[97177:2f56e1] [com.steipete.codexbar:community-fixture-plugin] [community-proof] fetch mode=fail supportsCostUsageV2=true
+2026-11-15 01:21:09.844 Db CommunityStatisticsProof[97177:2f56e1] [com.steipete.codexbar:community-fixture-plugin] [community-proof] fetch mode=fail supportsCostUsageV2=true
+2026-11-15 01:21:09.880 Db CommunityStatisticsProof[97177:2f56e1] [com.steipete.codexbar:community-fixture-plugin] [community-proof] fetch mode=fail supportsCostUsageV2=true

@@ -1,0 +1,30 @@
+{
+  "sourceCommit": "bcda9e66f12848277e17490f7100822d1b98a4a7",
+  "pluginID": "nullable-fixture",
+  "fixtureSHA256": "646f21975cc25c2b5e61ffefa53d97baebcbe563c579b7a6a297e2e464e0982d",
+  "nativeProvidersEnabled": 0,
+  "selectedDays": 7,
+  "timeZone": "Asia/Shanghai",
+  "outOfPeriodUnknownDate": "2026-11-01",
+  "observedTrackedTokens": 123,
+  "observedCoverage": "2/7",
+  "observedDailyRows": [
+    {
+      "date": "2026-11-13",
+      "tokens": 123,
+      "requests": 2
+    },
+    {
+      "date": "2026-11-14",
+      "tokens": 0,
+      "requests": 0
+    },
+    {
+      "date": "2026-11-15",
+      "tokens": null,
+      "requests": null
+    }
+  ],
+  "actualAppRuntime": true,
+  "discoveredAndApprovedThroughUI": true
+}

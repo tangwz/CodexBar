@@ -1,0 +1,23 @@
+{
+  "baselineVersion": "0.84.0",
+  "currentSourceCommit": "20da67d6ea07394ab201797a6647ef8b6345b5d9",
+  "pluginSHA256": "4176b7e5c886e850077bdb81c7fe1ac548bdc4eee8a05d8da0b94eaed617e2ff",
+  "approvalSHA256": "fc3279bc2114a02196d2cc01dbaba84a06150dfbbb278bb1c13149c28baa2b81",
+  "pluginConfigPreserved": true,
+  "approvalPreserved": true,
+  "enabledNativeCount": 0,
+  "baselineCapabilityV2": false,
+  "currentCapabilityV2": true,
+  "observedCurrentCoverage": "3/30",
+  "observedCurrentTokens": 1500,
+  "observedCurrentSources": 1,
+  "copiedImageMatchesSaved": true,
+  "savedImage": "community-sharing-20da67d.png",
+  "copiedText": "community-sharing-20da67d.txt",
+  "failureMode": "MODE setting changed to fail, then Refresh",
+  "observedFailureMessage": "Synthetic fixture refresh failure",
+  "failedSourceExcludedFromStatistics": true,
+  "sharingDisabledAfterFailure": true,
+  "publishedImage": "share.png",
+  "publishedText": "share.txt"
+}
