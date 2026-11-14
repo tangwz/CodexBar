@@ -294,10 +294,7 @@ enum SpendDashboardSource {
                 shouldRefresh: shouldRefresh)
         }
         let baselinesToRefresh = providerBaselines.filter(\.shouldRefresh)
-        let pluginsToRefresh = self.statisticsPlugins(store: store).filter {
-            mode.shouldRefresh(hasPublication: self.pluginPublication($0, store: store) != nil)
-        }
-        if !baselinesToRefresh.isEmpty || !pluginsToRefresh.isEmpty {
+        if !baselinesToRefresh.isEmpty {
             await withTaskGroup(of: Void.self) { group in
                 for baseline in baselinesToRefresh {
                     group.addTask {
@@ -307,10 +304,6 @@ enum SpendDashboardSource {
                             await store.refreshSpendDashboardTokenUsageNow(for: baseline.provider, force: true)
                         }
                     }
-                }
-                for plugin in pluginsToRefresh {
-                    let instanceID = plugin.manifest.id
-                    group.addTask { await store.refreshUserPluginStatistics(instanceID) }
                 }
             }
         }
@@ -1678,10 +1671,13 @@ final class SpendDashboardController {
         let openCodex = SpendDashboardSource.mergingOpenCodexInputsWithObservation(
             inputs,
             request: outcome.request)
+        // A later plugin publication supersedes the forced request's failure.
+        let recoveredPluginIDs = Set(inputs.map(\.id)).union(outcome.confirmedEmptySourceIDs)
+            .filter { $0.hasPrefix("plugin/") }
         return ReconciledOutcome(
             result: SpendDashboardLoadResult(
                 inputs: openCodex.inputs,
-                failedSourceIDs: forceFailed.union(barrierFailed),
+                failedSourceIDs: forceFailed.subtracting(recoveredPluginIDs).union(barrierFailed),
                 invalidatedSourceIDs: invalidated,
                 openCodexObservation: openCodex.observation),
             confirmedEmptySourceIDs: outcome.confirmedEmptySourceIDs)

@@ -9,36 +9,40 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct UserPluginRefreshTests {
-    @Test(arguments: [SpendDashboardRequestBuildMode.refreshMissing, .forceRefresh])
-    func `dashboard refresh loads approved plugins without an initial publication`(
-        mode: SpendDashboardRequestBuildMode) async throws
-    {
+    @Test
+    func `dashboard requests never fetch missing community statistics`() async throws {
         let fixture = try Fixture(includeCostUsage: true)
         defer { fixture.remove() }
         fixture.settings.costUsageEnabled = true
         fixture.settings.openCodexUsageLogsEnabled = false
-        let now = try #require(ISO8601DateFormatter().date(from: "2026-11-14T12:00:00Z"))
-        let configuration = SpendDashboardSource.configuration(settings: fixture.settings, store: fixture.store)
-        #expect(configuration.providerIDs == ["plugin/refresh-fixture"])
-        let controller = SpendDashboardController(
-            userDefaults: InMemoryUserDefaults(),
-            requestBuilder: { mode in
-                await SpendDashboardSource.makeRequest(
-                    settings: fixture.settings, store: fixture.store, mode: mode, now: now)
-            },
-            nowProvider: { now })
-        defer { controller.stop() }
-        controller.update(configuration: configuration, force: mode == .forceRefresh)
-        try await fixture.transport.waitForRequests(1)
-        await fixture.transport.finish(1, used: 42)
-        try await SpendDashboardStateWait.until { !controller.isRefreshing }
-        #expect(controller.model.groups.first?.totalTokens == 120)
-        #expect(controller.publication.inputs.first?.provider == fixture.id)
-        #expect(await fixture.transport.requestCount == 1)
+        await fixture.transport.respondImmediately(failure: true)
+        for mode in [SpendDashboardRequestBuildMode.captureOnly, .refreshMissing, .forceRefresh] {
+            let request = await SpendDashboardSource.makeRequest(
+                settings: fixture.settings, store: fixture.store, mode: mode)
+            #expect(request.unavailableSourceIDs == ["plugin/refresh-fixture"])
+            #expect(request.capturedInputs.isEmpty)
+        }
+        #expect(await fixture.transport.requestCount == 0)
     }
 
     @Test
-    func `dashboard refresh excludes failed plugin history and can recover`() async throws {
+    func `shared statistics publication never fetches plugins while the dashboard is closed`() async throws {
+        let fixture = try Fixture(includeCostUsage: true)
+        defer { fixture.remove() }
+        fixture.settings.costUsageEnabled = true
+        fixture.settings.openCodexUsageLogsEnabled = false
+        await fixture.transport.respondImmediately(failure: true)
+        fixture.store.startSharedSpendDashboardPublication()
+        defer { fixture.store.stopSharedSpendDashboardPublication() }
+        let controller = fixture.store.sharedSpendDashboardController()
+        try await SpendDashboardStateWait.until { !controller.isRefreshing }
+        #expect(controller.failedSourceCount == 1)
+        #expect(controller.publication.inputs.isEmpty)
+        #expect(await fixture.transport.requestCount == 0)
+    }
+
+    @Test
+    func `dashboard captures regular plugin refresh failures and recovery`() async throws {
         let fixture = try Fixture(includeCostUsage: true)
         defer { fixture.remove() }
         fixture.settings.costUsageEnabled = true
@@ -53,12 +57,15 @@ struct UserPluginRefreshTests {
             nowProvider: { now })
         defer { controller.stop() }
         for (index, failure) in [false, true, false].enumerated() {
+            let refresh = Task { await fixture.store.refreshUserPlugin(fixture.id) }
+            try await fixture.transport.waitForRequests(index + 1)
+            await fixture.transport.finish(index + 1, used: 42, failure: failure)
+            await refresh.value
             controller.update(
                 configuration: SpendDashboardSource.configuration(settings: fixture.settings, store: fixture.store),
                 force: true)
-            try await fixture.transport.waitForRequests(index + 1)
-            await fixture.transport.finish(index + 1, used: 42, failure: failure)
             try await SpendDashboardStateWait.until { !controller.isRefreshing }
+            #expect(await fixture.transport.requestCount == index + 1)
             #expect(controller.configuration?.providerIDs == ["plugin/refresh-fixture"])
             #expect(controller.publication.inputs.isEmpty == failure)
             #expect(controller.failedSourceCount == (failure ? 1 : 0))
@@ -201,8 +208,6 @@ struct UserPluginRefreshTests {
         #expect(fixture.store.errors[fixture.id] != nil)
         try await SpendDashboardStateWait.until { fixture.store.spendDashboardPublication.inputs.isEmpty }
         #expect(SpendDashboardSource.pluginInputs(store: fixture.store).isEmpty)
-        fixture.store.stopSharedSpendDashboardPublication()
-        await fixture.transport.finishPending()
     }
 
     enum Change: CaseIterable {
@@ -522,19 +527,27 @@ struct UserPluginRefreshTests {
     private actor GatedTransport: ProviderHTTPTransport {
         private var requests: [URLRequest] = []
         private var continuations: [Int: CheckedContinuation<(Data, URLResponse), any Error>] = [:]
+        private var immediateFailure: Bool?
+
+        func respondImmediately(failure: Bool) {
+            self.immediateFailure = failure
+        }
 
         var requestCount: Int {
             self.requests.count
         }
 
-        func finishPending() {
-            for index in self.continuations.keys.sorted() {
-                self.finish(index, used: 0, failure: true)
-            }
-        }
-
         func data(for request: URLRequest) async throws -> (Data, URLResponse) {
             self.requests.append(request)
+            if let failure = self.immediateFailure {
+                let url = try #require(request.url)
+                let response = try #require(HTTPURLResponse(
+                    url: url,
+                    statusCode: failure ? 401 : 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]))
+                return (Data("{\"used\":42}".utf8), response)
+            }
             let index = self.requests.count
             return try await withCheckedThrowingContinuation { self.continuations[index] = $0 }
         }

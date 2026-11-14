@@ -6,6 +6,61 @@ import Testing
 
 @MainActor
 struct SpendDashboardSourceConcurrencyTests {
+    @Test(arguments: [false, true])
+    func `recovered plugin capture clears a forced failure`(hasCostUsage: Bool) async throws {
+        let gate = SpendDashboardPendingLoads<Void>()
+        defer { gate.close() }
+        let sourceID = "plugin/refresh-fixture"
+        let failed = SpendDashboardConfiguration(
+            costUsageEnabled: true,
+            providerIDs: [sourceID],
+            codexAccountIdentities: [],
+            sourceOwnershipFingerprints: ["\(sourceID):owner"],
+            sourceRevisions: ["\(sourceID):unavailable"])
+        let recovered = SpendDashboardConfiguration(
+            costUsageEnabled: true,
+            providerIDs: [sourceID],
+            codexAccountIdentities: [],
+            sourceOwnershipFingerprints: ["\(sourceID):owner"],
+            sourceRevisions: ["\(sourceID):\(hasCostUsage ? "success" : "empty")"])
+        let input = try SpendDashboardModel.ProviderInput(
+            id: sourceID,
+            providerID: #require(ProviderInstanceID(rawValue: "refresh-fixture")),
+            displayName: "Refresh Fixture",
+            snapshot: Self.input(cost: 2).snapshot)
+        let controller = SpendDashboardController(
+            userDefaults: InMemoryUserDefaults(),
+            requestBuilder: { mode in
+                SpendDashboardLoadRequest(
+                    configuration: mode == .forceRefresh ? failed : recovered,
+                    capturedInputs: mode != .forceRefresh && hasCostUsage ? [input] : [],
+                    unavailableSourceIDs: mode == .forceRefresh ? [sourceID] : [],
+                    confirmedEmptySourceIDs: mode != .forceRefresh && !hasCostUsage ? [sourceID] : [],
+                    codexRequests: [],
+                    now: Date(timeIntervalSince1970: 1_784_179_200),
+                    force: mode.forcesLoader)
+            },
+            loader: { request in
+                await gate.suspend()
+                return SpendDashboardLoadResult(
+                    inputs: request.capturedInputs, failedSourceIDs: request.unavailableSourceIDs)
+            })
+        defer { controller.stop() }
+        controller.update(configuration: failed, force: true)
+        try await gate.waitForPendingCount(1)
+        controller.update(configuration: recovered)
+        gate.resume()
+        try await Self.waitUntil { !controller.isRefreshing }
+        #expect(controller.failedSourceCount == 0)
+        let model = controller.publication.model(
+            requestedDays: 7,
+            now: Date(timeIntervalSince1970: 1_784_179_200),
+            calendar: Calendar(identifier: .gregorian),
+            preferredCurrencyCode: "USD")
+        #expect(model.groups.isEmpty == !hasCostUsage)
+        #expect((ShareStatsBuilder.make(model: model) == nil) == !hasCostUsage)
+    }
+
     @Test
     func `failed plugin capture cannot restore a successful forced input`() async throws {
         let gate = SpendDashboardPendingLoads<Void>()

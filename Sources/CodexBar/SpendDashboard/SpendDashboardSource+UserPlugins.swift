@@ -38,14 +38,6 @@ extension SpendDashboardSource {
 }
 
 extension UsageStore {
-    func refreshUserPluginStatistics(_ instanceID: ProviderInstanceID) async {
-        if let state = self.providerRefreshCoordinator.coalescingState(for: instanceID) {
-            _ = await self.providerRefreshCoordinator.wait(for: instanceID, state: state)
-        } else {
-            await self.refreshUserPlugin(instanceID)
-        }
-    }
-
     func userPluginStatisticsScope(_ plugin: UserProviderPlugin) -> String {
         let enablement = self.settings.providerEnablementRevision(forInstanceID: plugin.manifest.id)
         return "\(ObjectIdentifier(plugin.runtime)):\(enablement)"
