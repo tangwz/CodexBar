@@ -351,14 +351,6 @@ enum SpendDashboardSource {
         var inputs = self.pluginInputs(store: store)
         var unavailableSourceIDs: Set<String> = []
         var confirmedEmptySourceIDs: Set<String> = []
-        for plugin in self.statisticsPlugins(store: store) {
-            let sourceID = "plugin/\(plugin.manifest.id.rawValue)"
-            if let publication = self.pluginPublication(plugin, store: store) {
-                if publication.snapshot == nil { confirmedEmptySourceIDs.insert(sourceID) }
-            } else {
-                unavailableSourceIDs.insert(sourceID)
-            }
-        }
         // Provider-specific by design: spend dashboard
         for provider in providers where provider != .codex {
             // Provider-specific by design: Grok local session tokens are independent of the
@@ -407,6 +399,14 @@ enum SpendDashboardSource {
                 snapshot: snapshot,
                 // Provider-specific by design: Pi reports local history rather than a subscription feed.
                 sourceKind: provider == .pi ? .localHistory : .native))
+        }
+        for plugin in self.statisticsPlugins(store: store) {
+            let sourceID = "plugin/\(plugin.manifest.id.rawValue)"
+            if let publication = self.pluginPublication(plugin, store: store) {
+                if publication.snapshot == nil { confirmedEmptySourceIDs.insert(sourceID) }
+            } else {
+                unavailableSourceIDs.insert(sourceID)
+            }
         }
         return SpendDashboardLoadRequest(
             configuration: configuration,
